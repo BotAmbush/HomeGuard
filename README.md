@@ -14,10 +14,11 @@ When motion or noise is detected while the system is armed, it records a video c
 | 👁️ **Motion detection** | OpenCV frame-differencing with adjustable sensitivity (1–10) |
 | 🔊 **Noise detection** | Microphone RMS monitoring with adjustable threshold |
 | ⏱️ **Arm countdown** | Configurable delay (0 s / 30 s / 1 min / 2 min / 5 min) before arming |
-| 📹 **Pre-event buffer** | Captures the **10 seconds before** an alert and prepends them to the clip |
-| 🔁 **Continuous recording** | If motion persists, keeps recording in **15-second chunks** until the subject leaves the frame |
-| 📲 **Telegram alerts** | Sends a Hebrew-language message + video clip to your phone |
+| 📹 **Pre-event buffer** | Captures footage *before* the alert and prepends it to the clip (configurable, default 5 s) |
+| 🔁 **Continuous recording** | If motion persists, keeps recording in configurable-length chunks until the subject leaves the frame |
+| 📲 **Telegram alerts** | Sends a message + video clip to your phone |
 | 🗂️ **Gallery** | Built-in gallery tab to browse and replay all saved recordings |
+| 🌐 **Hebrew / English UI** | Switch languages at any time with the toggle button — layout direction adjusts automatically |
 | 🌑 **Dark theme** | Fully styled dark UI — easy on the eyes at night |
 | 📦 **Standalone EXE** | Single `HomeGuard.exe` — no Python or libraries needed on the target machine |
 
@@ -80,15 +81,14 @@ Motion / Noise detected
         ▼
 ┌───────────────────────────────────────────┐
 │  First clip                               │
-│  • 10 s pre-event buffer (silent audio)   │
-│  • 15 s live recording with audio         │
-│  • Sends Hebrew Telegram message + video  │
+│  • Pre-buffer (default 5 s, configurable) │
+│  • Live recording (default 15 s)          │
+│  • Telegram message + video               │
 └───────────────────┬───────────────────────┘
                     │ motion still active?
                     ▼
           ┌─────────────────────┐
-          │  Next 15 s chunk    │──► repeat until still
-          │  Telegram: "קטע 2"  │
+          │  Next chunk (15 s)  │──► repeat until still
           └─────────────────────┘
 ```
 
@@ -100,9 +100,10 @@ Motion / Noise detected
 HomeGuard/
 ├── main.py           # PyQt5 UI, state machine, alert logic
 ├── monitor.py        # CameraThread, AudioMonitor, RecordingThread
-├── telegram_bot.py   # TelegramSender (QThread, Hebrew messages)
+├── telegram_bot.py   # TelegramSender (QThread)
 ├── gallery.py        # Gallery tab with thumbnail grid + video player
 ├── config.py         # Config load/save, path helpers
+├── i18n.py           # Hebrew / English translations
 ├── build.py          # PyInstaller build script → HomeGuard.exe
 ├── requirements.txt
 └── screenshots/
@@ -117,11 +118,13 @@ Settings are saved automatically in `config.json` next to the EXE:
 
 | Key | Default | Description |
 |---|---|---|
-| `motion_sensitivity` | 7 | 1 (low) – 10 (high) |
-| `noise_threshold` | 40 | Microphone RMS threshold (1–100) |
+| `motion_sensitivity` | 5 | 1 (low) – 10 (high) |
+| `noise_threshold` | 30 | Microphone RMS threshold (1–100) |
 | `countdown_delay` | 30 | Arm delay in seconds |
 | `clip_duration` | 15 | Recording chunk duration in seconds |
+| `pre_buffer_secs` | 5 | Pre-event buffer length in seconds (0–30) |
 | `camera_index` | 0 | Camera device index |
+| `language` | `"en"` | UI language — `"en"` or `"he"` |
 
 ---
 

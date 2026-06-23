@@ -25,7 +25,9 @@ DEFAULT_CONFIG = {
     "countdown_delay": 30,
     "camera_index": 0,
     "clip_duration": 15,
+    "pre_buffer_secs": 5,
     "recordings_dir": "recordings",
+    "language": "en",
 }
 
 

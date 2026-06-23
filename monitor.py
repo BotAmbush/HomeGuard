@@ -43,10 +43,12 @@ class CameraThread(QThread):
         with QMutexLocker(self._mutex):
             self._sensitivity = max(1, min(10, value))
 
-    def snapshot_prebuffer(self) -> list[np.ndarray]:
-        """Return a copy of the current pre-event frame buffer (thread-safe)."""
+    def snapshot_prebuffer(self, secs: float = 5.0) -> list[np.ndarray]:
+        """Return up to *secs* seconds of frames from the pre-event buffer (thread-safe)."""
         with QMutexLocker(self._mutex):
-            return list(self._prebuffer)
+            frames = list(self._prebuffer)
+            n = max(1, int(self.actual_fps * secs))
+            return frames[-n:] if n < len(frames) else frames
 
     def start_recording(self, writer: cv2.VideoWriter) -> None:
         with QMutexLocker(self._mutex):

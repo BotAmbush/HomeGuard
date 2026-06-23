@@ -46,6 +46,8 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+import i18n
+from i18n import tr
 from config import get_base_dir, load_config, load_telegram_creds, save_config, save_telegram_creds
 from gallery import GalleryWidget
 from monitor import AudioMonitor, CameraThread, RecordingThread
@@ -188,17 +190,39 @@ QPushButton {
 QPushButton:hover { background: #5c1a1a; border-color: #cc4444; }
 """
 
+LANG_STYLE = """
+QPushButton {
+    background: #1e2040; color: #9090cc;
+    border: 1px solid #454580;
+    border-radius: 5px; font-size: 12px; padding: 4px 10px;
+}
+QPushButton:hover { background: #2a2c55; color: #c0c0ff; }
+"""
+
+# ── Countdown option keys and values ──────────────────────────────────────────
+
+COUNTDOWN_OPTIONS = [
+    ("cd_none", 0),
+    ("cd_30s",  30),
+    ("cd_1m",   60),
+    ("cd_2m",   120),
+    ("cd_5m",   300),
+]
+
+# ── State constants ────────────────────────────────────────────────────────────
+
+STATE_DISARMED  = "DISARMED"
+STATE_COUNTDOWN = "COUNTDOWN"
+STATE_ARMED     = "ARMED"
+STATE_RECORDING = "RECORDING"
+
+
 # ── Setup dialog ───────────────────────────────────────────────────────────────
 
 class SetupDialog(QDialog):
-    """First-run dialog to configure Telegram credentials.
-
-    Credentials are saved to telegram.txt next to the EXE.
-    """
-
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("HomeGuard — Telegram Setup")
+        self.setWindowTitle(tr("setup_title"))
         self.setMinimumWidth(500)
         self.setModal(True)
         self._build()
@@ -207,20 +231,12 @@ class SetupDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
 
-        title = QLabel("🏠 Welcome to HomeGuard")
+        title = QLabel(tr("setup_welcome"))
         title.setStyleSheet("font-size: 18px; font-weight: bold; color: #8080ff; padding: 8px 0;")
         layout.addWidget(title)
 
-        from config import _TELEGRAM_FILE  # show the user exactly where the file is saved
-        info = QLabel(
-            "To receive alerts on your phone you need a Telegram bot.\n\n"
-            "1. Open Telegram → search <b>@BotFather</b> → /newbot\n"
-            "2. Copy the <b>Bot Token</b> it gives you.\n"
-            "3. Send any message to your new bot.\n"
-            "4. Visit: <tt>https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</tt>\n"
-            f"   Find <tt>\"chat\":{{\"id\":YOUR_ID}}</tt> — copy that number.\n\n"
-            f"Credentials will be saved to:\n<tt>{_TELEGRAM_FILE}</tt>"
-        )
+        from config import _TELEGRAM_FILE
+        info = QLabel(tr("setup_info", path=_TELEGRAM_FILE))
         info.setTextFormat(Qt.RichText)
         info.setWordWrap(True)
         info.setStyleSheet("color: #aaa; font-size: 12px; background: #12131e; padding: 10px; border-radius: 6px;")
@@ -228,14 +244,13 @@ class SetupDialog(QDialog):
 
         form = QFormLayout()
         self.token_edit = QLineEdit()
-        self.token_edit.setPlaceholderText("1234567890:ABCdef...")
+        self.token_edit.setPlaceholderText(tr("setup_token_ph"))
         self.chat_edit = QLineEdit()
-        self.chat_edit.setPlaceholderText("123456789")
-        form.addRow("Bot Token:", self.token_edit)
-        form.addRow("Chat ID:", self.chat_edit)
+        self.chat_edit.setPlaceholderText(tr("setup_chat_ph"))
+        form.addRow(tr("setup_token"), self.token_edit)
+        form.addRow(tr("setup_chat"),  self.chat_edit)
         layout.addLayout(form)
 
-        # Pre-fill if credentials already exist
         existing_token, existing_chat = load_telegram_creds()
         if existing_token:
             self.token_edit.setText(existing_token)
@@ -248,11 +263,11 @@ class SetupDialog(QDialog):
         layout.addWidget(self.status_lbl)
 
         btns = QHBoxLayout()
-        test_btn = QPushButton("🔗 Test Connection")
+        test_btn = QPushButton(tr("btn_test_conn"))
         test_btn.clicked.connect(self._test)
-        self.save_btn = QPushButton("✅ Save & Continue")
+        self.save_btn = QPushButton(tr("btn_save"))
         self.save_btn.clicked.connect(self._save)
-        skip_btn = QPushButton("Skip (no Telegram)")
+        skip_btn = QPushButton(tr("btn_skip"))
         skip_btn.clicked.connect(self.accept)
         btns.addWidget(test_btn)
         btns.addWidget(self.save_btn)
@@ -261,12 +276,12 @@ class SetupDialog(QDialog):
 
     def _test(self) -> None:
         token = self.token_edit.text().strip()
-        chat = self.chat_edit.text().strip()
+        chat  = self.chat_edit.text().strip()
         if not token or not chat:
-            self.status_lbl.setText("❌ Fill in both fields first.")
+            self.status_lbl.setText(tr("setup_fill_both"))
             self.status_lbl.setStyleSheet("color: #ff6060; font-size: 12px;")
             return
-        self.status_lbl.setText("Testing…")
+        self.status_lbl.setText(tr("setup_testing"))
         sender = TelegramSender()
         sender.setup(token, chat)
         ok, msg = sender.test_connection()
@@ -279,9 +294,9 @@ class SetupDialog(QDialog):
 
     def _save(self) -> None:
         token = self.token_edit.text().strip()
-        chat = self.chat_edit.text().strip()
+        chat  = self.chat_edit.text().strip()
         if not token or not chat:
-            self.status_lbl.setText("❌ Both fields are required.")
+            self.status_lbl.setText(tr("setup_both_req"))
             self.status_lbl.setStyleSheet("color: #ff6060; font-size: 12px;")
             return
         save_telegram_creds(token, chat)
@@ -290,41 +305,28 @@ class SetupDialog(QDialog):
 
 # ── Main window ────────────────────────────────────────────────────────────────
 
-COUNTDOWN_OPTIONS = [("No delay", 0), ("30 seconds", 30), ("1 minute", 60),
-                     ("2 minutes", 120), ("5 minutes", 300)]
-
-STATE_DISARMED  = "DISARMED"
-STATE_COUNTDOWN = "COUNTDOWN"
-STATE_ARMED     = "ARMED"
-STATE_RECORDING = "RECORDING"
-
-STATE_STYLES = {
-    STATE_DISARMED:  ("DISARMED",   "#666688"),
-    STATE_ARMED:     ("● ARMED",    "#30dd60"),
-    STATE_RECORDING: ("⬤ REC",     "#ff4444"),
-}
-
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("HomeGuard — Room Monitor")
-        self.setMinimumSize(1100, 680)
         self.config = load_config()
+
+        # Apply stored language before building any UI
+        i18n.set_lang(self.config.get("language", "en"))
+        self._apply_layout_direction()
+
         self.state = STATE_DISARMED
         self.countdown_remaining = 0
         self._motion_consecutive = 0
-        self._alert_cooldown = 0       # ticks of 100 ms
+        self._alert_cooldown = 0
         self.recorder: RecordingThread | None = None
         self._current_trigger = ""
         self._current_ts = ""
         self._current_path = ""
-        self._last_motion_level = 0.0   # updated every frame (even during recording)
-        self._recording_chunk = 0       # 1 for first clip, 2+ for continuations
+        self._last_motion_level = 0.0
+        self._recording_chunk = 0
 
         token, chat_id = load_telegram_creds()
 
-        # Always resolve recordings dir relative to the EXE / script location
         rd = self.config["recordings_dir"]
         if not os.path.isabs(rd):
             rd = os.path.join(get_base_dir(), rd)
@@ -338,10 +340,10 @@ class MainWindow(QMainWindow):
         if token and chat_id:
             self.telegram.setup(token, chat_id)
         self.telegram.send_complete.connect(
-            lambda m: self.statusBar().showMessage(f"📤 {m}", 5000)
+            lambda m: self.statusBar().showMessage(tr("sb_tg_sent", msg=m), 5000)
         )
         self.telegram.send_failed.connect(
-            lambda m: self.statusBar().showMessage(f"❌ {m}", 8000)
+            lambda m: self.statusBar().showMessage(tr("sb_tg_fail", msg=m), 8000)
         )
         self.telegram.start()
 
@@ -372,10 +374,10 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.tabs)
 
         monitor_tab = QWidget()
-        self.tabs.addTab(monitor_tab, "🏠  Monitor")
+        self.tabs.addTab(monitor_tab, tr("tab_monitor"))
 
         self.gallery = GalleryWidget(self._recordings_dir, self)
-        self.tabs.addTab(self.gallery, "📹  Gallery")
+        self.tabs.addTab(self.gallery, tr("tab_gallery"))
 
         outer = QHBoxLayout(monitor_tab)
         outer.setContentsMargins(10, 10, 10, 10)
@@ -385,7 +387,7 @@ class MainWindow(QMainWindow):
         left = QVBoxLayout()
         left.setSpacing(6)
 
-        self.video_label = QLabel("No camera signal")
+        self.video_label = QLabel(tr("cam_no_signal"))
         self.video_label.setFixedSize(640, 480)
         self.video_label.setAlignment(Qt.AlignCenter)
         self.video_label.setStyleSheet(
@@ -395,7 +397,8 @@ class MainWindow(QMainWindow):
         left.addWidget(self.video_label)
 
         cam_row = QHBoxLayout()
-        cam_row.addWidget(QLabel("Camera index:"))
+        self._lbl_cam_idx = QLabel(tr("lbl_camera_index"))
+        cam_row.addWidget(self._lbl_cam_idx)
         self.cam_spin = QSpinBox()
         self.cam_spin.setRange(0, 9)
         self.cam_spin.setValue(self.config["camera_index"])
@@ -411,52 +414,61 @@ class MainWindow(QMainWindow):
         right = QVBoxLayout()
         right.setSpacing(10)
 
+        # Language toggle (top of panel)
+        lang_row = QHBoxLayout()
+        lang_row.addStretch()
+        self._lang_btn = QPushButton(tr("btn_lang"))
+        self._lang_btn.setStyleSheet(LANG_STYLE)
+        self._lang_btn.setFixedWidth(82)
+        self._lang_btn.clicked.connect(self._toggle_lang)
+        lang_row.addWidget(self._lang_btn)
+        right.addLayout(lang_row)
+
         # Status
-        status_box = QGroupBox("Status")
-        sb_layout = QVBoxLayout(status_box)
-        self.status_label = QLabel("DISARMED")
+        self._grp_status = QGroupBox(tr("grp_status"))
+        sb_layout = QVBoxLayout(self._grp_status)
+        self.status_label = QLabel(tr("state_disarmed"))
         self.status_label.setAlignment(Qt.AlignCenter)
         self.status_label.setFont(QFont("Segoe UI", 26, QFont.Bold))
         self.status_label.setStyleSheet("color: #666688;")
         sb_layout.addWidget(self.status_label)
-        right.addWidget(status_box)
+        right.addWidget(self._grp_status)
 
         # Arm / disarm
-        arm_box = QGroupBox("Arm / Disarm")
-        ab_layout = QVBoxLayout(arm_box)
+        self._grp_arm = QGroupBox(tr("grp_arm"))
+        ab_layout = QVBoxLayout(self._grp_arm)
         cd_row = QHBoxLayout()
-        cd_row.addWidget(QLabel("Delay:"))
+        self._lbl_delay = QLabel(tr("lbl_delay"))
+        cd_row.addWidget(self._lbl_delay)
         self.cd_combo = QComboBox()
-        for label, _ in COUNTDOWN_OPTIONS:
-            self.cd_combo.addItem(label)
-        idx = next(
-            (i for i, (_, v) in enumerate(COUNTDOWN_OPTIONS)
-             if v == self.config.get("countdown_delay", 30)),
-            1,
-        )
+        for key, _ in COUNTDOWN_OPTIONS:
+            self.cd_combo.addItem(tr(key))
+        saved_delay = self.config.get("countdown_delay", 30)
+        idx = next((i for i, (_, v) in enumerate(COUNTDOWN_OPTIONS) if v == saved_delay), 1)
         self.cd_combo.setCurrentIndex(idx)
         cd_row.addWidget(self.cd_combo)
         ab_layout.addLayout(cd_row)
 
         btn_row = QHBoxLayout()
-        self.arm_btn = QPushButton("🟢  ARM")
+        self.arm_btn = QPushButton(tr("btn_arm"))
         self.arm_btn.setStyleSheet(ARM_STYLE)
         self.arm_btn.clicked.connect(self._arm)
-        self.disarm_btn = QPushButton("🔴  DISARM")
+        self.disarm_btn = QPushButton(tr("btn_disarm"))
         self.disarm_btn.setStyleSheet(DISARM_STYLE)
         self.disarm_btn.setEnabled(False)
         self.disarm_btn.clicked.connect(self._disarm)
         btn_row.addWidget(self.arm_btn)
         btn_row.addWidget(self.disarm_btn)
         ab_layout.addLayout(btn_row)
-        right.addWidget(arm_box)
+        right.addWidget(self._grp_arm)
 
         # Sensitivity
-        sens_box = QGroupBox("Detection Sensitivity")
-        sl_layout = QVBoxLayout(sens_box)
+        self._grp_sens = QGroupBox(tr("grp_sens"))
+        sl_layout = QVBoxLayout(self._grp_sens)
         sl_layout.setSpacing(6)
 
-        sl_layout.addWidget(QLabel("Motion sensitivity:"))
+        self._lbl_motion_sens = QLabel(tr("lbl_motion_sens"))
+        sl_layout.addWidget(self._lbl_motion_sens)
         ms_row = QHBoxLayout()
         self.motion_slider = QSlider(Qt.Horizontal)
         self.motion_slider.setRange(1, 10)
@@ -466,19 +478,24 @@ class MainWindow(QMainWindow):
         self.motion_lbl_val = QLabel(str(self.config["motion_sensitivity"]))
         self.motion_lbl_val.setFixedWidth(22)
         self.motion_slider.valueChanged.connect(self._on_motion_sens)
-        ms_row.addWidget(QLabel("Low"))
+        self._lbl_motion_low  = QLabel(tr("lbl_low"))
+        self._lbl_motion_high = QLabel(tr("lbl_high"))
+        ms_row.addWidget(self._lbl_motion_low)
         ms_row.addWidget(self.motion_slider)
-        ms_row.addWidget(QLabel("High"))
+        ms_row.addWidget(self._lbl_motion_high)
         ms_row.addWidget(self.motion_lbl_val)
         sl_layout.addLayout(ms_row)
-        sl_layout.addWidget(QLabel("Live motion level:"))
+
+        self._lbl_motion_live = QLabel(tr("lbl_motion_live"))
+        sl_layout.addWidget(self._lbl_motion_live)
         self.motion_bar = QProgressBar()
         self.motion_bar.setRange(0, 100)
         self.motion_bar.setFormat("%v%")
         sl_layout.addWidget(self.motion_bar)
 
         sl_layout.addSpacing(4)
-        sl_layout.addWidget(QLabel("Noise threshold:"))
+        self._lbl_noise_thresh = QLabel(tr("lbl_noise_thresh"))
+        sl_layout.addWidget(self._lbl_noise_thresh)
         ns_row = QHBoxLayout()
         self.noise_slider = QSlider(Qt.Horizontal)
         self.noise_slider.setRange(1, 100)
@@ -486,34 +503,138 @@ class MainWindow(QMainWindow):
         self.noise_lbl_val = QLabel(str(self.config["noise_threshold"]))
         self.noise_lbl_val.setFixedWidth(28)
         self.noise_slider.valueChanged.connect(self._on_noise_thresh)
-        ns_row.addWidget(QLabel("Low"))
+        self._lbl_noise_low  = QLabel(tr("lbl_low"))
+        self._lbl_noise_high = QLabel(tr("lbl_high"))
+        ns_row.addWidget(self._lbl_noise_low)
         ns_row.addWidget(self.noise_slider)
-        ns_row.addWidget(QLabel("High"))
+        ns_row.addWidget(self._lbl_noise_high)
         ns_row.addWidget(self.noise_lbl_val)
         sl_layout.addLayout(ns_row)
-        sl_layout.addWidget(QLabel("Live noise level:"))
+
+        self._lbl_noise_live = QLabel(tr("lbl_noise_live"))
+        sl_layout.addWidget(self._lbl_noise_live)
         self.noise_bar = QProgressBar()
         self.noise_bar.setRange(0, 100)
         self.noise_bar.setFormat("%v%")
         sl_layout.addWidget(self.noise_bar)
-        right.addWidget(sens_box)
+        right.addWidget(self._grp_sens)
 
-        # Settings / Telegram
-        tg_box = QGroupBox("Telegram")
-        tg_layout = QVBoxLayout(tg_box)
-        self.tg_test_btn = QPushButton("📡  Test Telegram Connection")
+        # Recording settings
+        self._grp_rec = QGroupBox("Recording" if i18n.get_lang() == "en" else "הקלטה")
+        rec_layout = QFormLayout(self._grp_rec)
+        rec_layout.setSpacing(6)
+
+        self._spin_clip = QSpinBox()
+        self._spin_clip.setRange(5, 120)
+        self._spin_clip.setSuffix(" s")
+        self._spin_clip.setValue(self.config.get("clip_duration", 15))
+        self._spin_clip.valueChanged.connect(self._on_clip_dur)
+        self._lbl_clip = QLabel("Clip duration:" if i18n.get_lang() == "en" else ":אורך קטע")
+        rec_layout.addRow(self._lbl_clip, self._spin_clip)
+
+        self._spin_prebuf = QSpinBox()
+        self._spin_prebuf.setRange(0, 30)
+        self._spin_prebuf.setSuffix(" s")
+        self._spin_prebuf.setValue(self.config.get("pre_buffer_secs", 5))
+        self._spin_prebuf.valueChanged.connect(self._on_prebuf)
+        self._lbl_prebuf = QLabel("Pre-buffer:" if i18n.get_lang() == "en" else ":באפר מקדים")
+        rec_layout.addRow(self._lbl_prebuf, self._spin_prebuf)
+        right.addWidget(self._grp_rec)
+
+        # Telegram
+        self._grp_tg = QGroupBox(tr("grp_telegram"))
+        tg_layout = QVBoxLayout(self._grp_tg)
+        self.tg_test_btn = QPushButton(tr("btn_test_tg"))
         self.tg_test_btn.clicked.connect(self._test_telegram)
-        setup_btn = QPushButton("⚙️  Change Credentials")
-        setup_btn.clicked.connect(self._show_setup)
+        self._tg_creds_btn = QPushButton(tr("btn_creds"))
+        self._tg_creds_btn.clicked.connect(self._show_setup)
         tg_layout.addWidget(self.tg_test_btn)
-        tg_layout.addWidget(setup_btn)
-        right.addWidget(tg_box)
+        tg_layout.addWidget(self._tg_creds_btn)
+        right.addWidget(self._grp_tg)
 
         right.addStretch()
         outer.addLayout(right)
 
         self.setStatusBar(QStatusBar())
-        self.statusBar().showMessage("HomeGuard ready.")
+        self._update_window_title()
+        self.statusBar().showMessage(tr("sb_ready"))
+
+    # ── Language ───────────────────────────────────────────────────────────────
+
+    def _toggle_lang(self) -> None:
+        new_lang = "he" if i18n.get_lang() == "en" else "en"
+        i18n.set_lang(new_lang)
+        self.config["language"] = new_lang
+        save_config(self.config)
+        self._apply_layout_direction()
+        self._retranslate_ui()
+
+    def _apply_layout_direction(self) -> None:
+        direction = Qt.RightToLeft if i18n.is_rtl() else Qt.LeftToRight
+        QApplication.instance().setLayoutDirection(direction)
+
+    def _update_window_title(self) -> None:
+        self.setWindowTitle(tr("window_title"))
+
+    def _retranslate_ui(self) -> None:
+        """Update every stored widget text to the current language."""
+        self._update_window_title()
+
+        # Tabs
+        self.tabs.setTabText(0, tr("tab_monitor"))
+        self.tabs.setTabText(1, tr("tab_gallery"))
+
+        # Status group
+        self._grp_status.setTitle(tr("grp_status"))
+        self._update_status()
+
+        # Arm group
+        self._grp_arm.setTitle(tr("grp_arm"))
+        self._lbl_delay.setText(tr("lbl_delay"))
+        self.arm_btn.setText(tr("btn_arm"))
+        self.disarm_btn.setText(tr("btn_disarm"))
+
+        # Repopulate countdown combo preserving current value
+        cur_val = COUNTDOWN_OPTIONS[self.cd_combo.currentIndex()][1]
+        self.cd_combo.blockSignals(True)
+        self.cd_combo.clear()
+        for key, _ in COUNTDOWN_OPTIONS:
+            self.cd_combo.addItem(tr(key))
+        idx = next((i for i, (_, v) in enumerate(COUNTDOWN_OPTIONS) if v == cur_val), 1)
+        self.cd_combo.setCurrentIndex(idx)
+        self.cd_combo.blockSignals(False)
+
+        # Sensitivity group
+        self._grp_sens.setTitle(tr("grp_sens"))
+        self._lbl_motion_sens.setText(tr("lbl_motion_sens"))
+        self._lbl_motion_live.setText(tr("lbl_motion_live"))
+        self._lbl_motion_low.setText(tr("lbl_low"))
+        self._lbl_motion_high.setText(tr("lbl_high"))
+        self._lbl_noise_thresh.setText(tr("lbl_noise_thresh"))
+        self._lbl_noise_live.setText(tr("lbl_noise_live"))
+        self._lbl_noise_low.setText(tr("lbl_low"))
+        self._lbl_noise_high.setText(tr("lbl_high"))
+
+        # Recording group
+        is_en = i18n.get_lang() == "en"
+        self._grp_rec.setTitle("Recording" if is_en else "הקלטה")
+        self._lbl_clip.setText("Clip duration:" if is_en else ":אורך קטע")
+        self._lbl_prebuf.setText("Pre-buffer:" if is_en else ":באפר מקדים")
+
+        # Telegram group
+        self._grp_tg.setTitle(tr("grp_telegram"))
+        self.tg_test_btn.setText(tr("btn_test_tg"))
+        self._tg_creds_btn.setText(tr("btn_creds"))
+
+        # Camera row + misc
+        self._lbl_cam_idx.setText(tr("lbl_camera_index"))
+        self._lang_btn.setText(tr("btn_lang"))
+
+        # Gallery
+        self.gallery.retranslate()
+
+        # Status bar
+        self.statusBar().showMessage(tr("sb_ready"))
 
     # ── State machine ──────────────────────────────────────────────────────────
 
@@ -538,7 +659,7 @@ class MainWindow(QMainWindow):
         self._update_status()
         self.arm_btn.setEnabled(True)
         self.disarm_btn.setEnabled(False)
-        self.statusBar().showMessage("Disarmed.", 3000)
+        self.statusBar().showMessage(tr("sb_disarmed"), 3000)
 
     def _countdown_tick(self) -> None:
         play_beep()
@@ -554,35 +675,31 @@ class MainWindow(QMainWindow):
         self._alert_cooldown = 0
         self._update_status()
         play_armed_sound()
-        self.statusBar().showMessage("Armed — monitoring active.", 4000)
+        self.statusBar().showMessage(tr("sb_armed"), 4000)
 
     def _trigger_alert(self, trigger: str) -> None:
-        """Start the FIRST recording chunk for a new alert event (with 10 s pre-buffer)."""
+        """Start the FIRST recording chunk for a new alert event (with pre-buffer)."""
         if self.state != STATE_ARMED:
             return
         self._recording_chunk = 1
         self.state = STATE_RECORDING
-        self._alert_cooldown = 150    # 15 s at 100 ms ticks
+        self._alert_cooldown = 150
         self._update_status()
 
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ts    = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         fname = datetime.now().strftime(f"%Y-%m-%d_%H-%M-%S_{trigger}.mp4")
-        out = os.path.join(self._recordings_dir, fname)
+        out   = os.path.join(self._recordings_dir, fname)
 
         self._current_trigger = trigger
-        self._current_ts = ts
+        self._current_ts   = ts
         self._current_path = out
 
-        dur = self.config["clip_duration"]
-        fps = self.camera.actual_fps or 20.0
+        dur  = self.config.get("clip_duration", 15)
+        fps  = self.camera.actual_fps or 20.0
         size = self.camera.actual_size or (640, 480)
+        pre_secs = self.config.get("pre_buffer_secs", 5)
 
-        # Snapshot the pre-event frame buffer (last ~10 s) BEFORE stopping audio.
-        prebuffer = self.camera.snapshot_prebuffer()
-
-        # Stop the microphone monitor BEFORE starting RecordingThread.
-        # Both would otherwise open simultaneous PortAudio input streams on the
-        # same device, which crashes the audio driver on many Windows systems.
+        prebuffer = self.camera.snapshot_prebuffer(pre_secs)
         self.audio.stop()
 
         self.recorder = RecordingThread(self.camera, out, dur, fps, size, prebuffer, self)
@@ -590,52 +707,46 @@ class MainWindow(QMainWindow):
         self.recorder.recording_failed.connect(self._on_rec_fail)
         self.recorder.start()
 
-        self.statusBar().showMessage(f"⚠️  {trigger.upper()} detected — recording chunk 1…")
+        trigger_name = tr(f"trigger_{trigger}")
+        self.statusBar().showMessage(tr("sb_rec_1", type=trigger_name))
 
     def _continue_recording(self) -> None:
-        """Start the next 15 s chunk because motion is still active in frame."""
+        """Start the next chunk because motion is still active."""
         self._recording_chunk += 1
         self.state = STATE_RECORDING
         self._update_status()
 
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ts      = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         chunk_n = self._recording_chunk
-        fname = datetime.now().strftime(
+        fname   = datetime.now().strftime(
             f"%Y-%m-%d_%H-%M-%S_{self._current_trigger}_chunk{chunk_n}.mp4"
         )
         out = os.path.join(self._recordings_dir, fname)
-        self._current_ts = ts
+        self._current_ts   = ts
         self._current_path = out
 
-        dur = self.config["clip_duration"]
-        fps = self.camera.actual_fps or 20.0
+        dur  = self.config.get("clip_duration", 15)
+        fps  = self.camera.actual_fps or 20.0
         size = self.camera.actual_size or (640, 480)
 
-        # No pre-buffer for continuation chunks (we are already recording continuously)
         self.audio.stop()
         old_recorder = self.recorder
         self.recorder = RecordingThread(self.camera, out, dur, fps, size, [], self)
         self.recorder.recording_complete.connect(self._on_rec_done)
         self.recorder.recording_failed.connect(self._on_rec_fail)
         self.recorder.start()
-        # Defer deletion of the previous thread so Qt can finish its signal dispatch
         if old_recorder is not None:
             old_recorder.deleteLater()
 
-        self.statusBar().showMessage(
-            f"⚠️  Motion still active — recording chunk {chunk_n}…"
-        )
+        self.statusBar().showMessage(tr("sb_rec_n", n=str(chunk_n)))
 
     def _on_rec_done(self, path: str) -> None:
-        # Decide BEFORE touching audio whether we should keep recording.
-        # This prevents the start→stop audio cycle when continuing.
         should_continue = (
             self.state == STATE_RECORDING and
             self._last_motion_level > self._motion_alert_threshold()
         )
-
         if not should_continue:
-            self.audio.start()   # restart mic only when we're done with the event
+            self.audio.start()
 
         if self.telegram.is_configured():
             self.telegram.send_alert(
@@ -644,7 +755,7 @@ class MainWindow(QMainWindow):
             )
         else:
             self.statusBar().showMessage(
-                f"Clip saved (Telegram not configured): {Path(path).name}", 6000
+                tr("sb_saved_no_tg", name=Path(path).name), 6000
             )
 
         if self.tabs.currentIndex() == 1:
@@ -658,16 +769,16 @@ class MainWindow(QMainWindow):
                 self._update_status()
 
     def _on_rec_fail(self, error: str) -> None:
-        self.audio.start()   # restart mic monitoring even on failure
+        self.audio.start()
         if self.state == STATE_RECORDING:
             self.state = STATE_ARMED
             self._update_status()
-        self.statusBar().showMessage(f"❌ Recording failed: {error}", 8000)
+        self.statusBar().showMessage(tr("sb_rec_fail", err=error), 8000)
 
     # ── Slots ──────────────────────────────────────────────────────────────────
 
     def _on_frame(self, frame: np.ndarray, motion_level: float) -> None:
-        self._last_motion_level = motion_level   # always current, used by continuation logic
+        self._last_motion_level = motion_level
         display = frame.copy()
 
         if self.state == STATE_COUNTDOWN:
@@ -680,18 +791,18 @@ class MainWindow(QMainWindow):
                 cv2.FONT_HERSHEY_SIMPLEX, 3.5, (255, 200, 50), 5,
             )
             cv2.putText(
-                display, "ARMING IN",
+                display, tr("cam_overlay_arming"),
                 (display.shape[1] // 2 - 80, display.shape[0] // 2 - 50),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 200, 50), 2,
             )
 
         elif self.state == STATE_RECORDING:
             cv2.circle(display, (22, 22), 10, (0, 0, 255), -1)
-            cv2.putText(display, "REC", (38, 30),
+            cv2.putText(display, tr("cam_overlay_rec"), (38, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
 
         elif self.state == STATE_ARMED:
-            cv2.putText(display, "ARMED", (8, 24),
+            cv2.putText(display, tr("cam_overlay_armed"), (8, 24),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.65, (50, 220, 80), 2)
 
         rgb = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
@@ -748,8 +859,8 @@ class MainWindow(QMainWindow):
         return max(0.005, 0.15 - sens * 0.013)
 
     def _on_cam_error(self, msg: str) -> None:
-        self.video_label.setText(f"⚠️ Camera error:\n{msg}")
-        self.statusBar().showMessage(f"Camera error: {msg}", 0)
+        self.video_label.setText(tr("cam_err_prefix") + msg)
+        self.statusBar().showMessage(msg, 0)
 
     def _on_motion_sens(self, val: int) -> None:
         self.motion_lbl_val.setText(str(val))
@@ -763,6 +874,14 @@ class MainWindow(QMainWindow):
         self.audio.set_threshold(val)
         save_config(self.config)
 
+    def _on_clip_dur(self, val: int) -> None:
+        self.config["clip_duration"] = val
+        save_config(self.config)
+
+    def _on_prebuf(self, val: int) -> None:
+        self.config["pre_buffer_secs"] = val
+        save_config(self.config)
+
     def _change_camera(self, idx: int) -> None:
         self.config["camera_index"] = idx
         save_config(self.config)
@@ -774,14 +893,20 @@ class MainWindow(QMainWindow):
         self.camera.start()
 
     def _update_status(self) -> None:
+        styles = {
+            STATE_DISARMED:  (tr("state_disarmed"), "#666688", "26px"),
+            STATE_ARMED:     (tr("state_armed"),    "#30dd60", "26px"),
+            STATE_RECORDING: (tr("state_rec"),      "#ff4444", "26px"),
+        }
         if self.state == STATE_COUNTDOWN:
-            self.status_label.setText(f"COUNTDOWN\n{self.countdown_remaining}s")
+            unit = tr("state_cd_unit")
+            self.status_label.setText(f"{tr('state_countdown')}\n{self.countdown_remaining}{unit}")
             self.status_label.setStyleSheet("color: #ffaa30; font-size: 22px; font-weight: bold;")
         else:
-            text, color = STATE_STYLES.get(self.state, ("UNKNOWN", "#888"))
+            text, color, size = styles.get(self.state, (self.state, "#888", "26px"))
             self.status_label.setText(text)
             self.status_label.setStyleSheet(
-                f"color: {color}; font-size: 26px; font-weight: bold;"
+                f"color: {color}; font-size: {size}; font-weight: bold;"
             )
 
     def _show_setup(self) -> None:
@@ -790,21 +915,21 @@ class MainWindow(QMainWindow):
             token, chat_id = load_telegram_creds()
             if token and chat_id:
                 self.telegram.setup(token, chat_id)
-                self.statusBar().showMessage("Telegram credentials updated.", 4000)
+                self.statusBar().showMessage(tr("setup_updated"), 4000)
 
     def _test_telegram(self) -> None:
         if not self.telegram.is_configured():
-            QMessageBox.warning(self, "Not configured", "Please set up Telegram credentials first.")
+            QMessageBox.warning(self, tr("tg_not_cfg_title"), tr("tg_not_cfg_msg"))
             return
         self.tg_test_btn.setEnabled(False)
-        self.tg_test_btn.setText("Testing…")
+        self.tg_test_btn.setText(tr("setup_testing"))
         ok, msg = self.telegram.test_connection()
         self.tg_test_btn.setEnabled(True)
-        self.tg_test_btn.setText("📡  Test Telegram Connection")
+        self.tg_test_btn.setText(tr("btn_test_tg"))
         if ok:
-            QMessageBox.information(self, "Telegram OK", msg)
+            QMessageBox.information(self, tr("tg_ok_title"), msg)
         else:
-            QMessageBox.critical(self, "Telegram Error", msg)
+            QMessageBox.critical(self, tr("tg_err_title"), msg)
 
     # ── Lifecycle ──────────────────────────────────────────────────────────────
 

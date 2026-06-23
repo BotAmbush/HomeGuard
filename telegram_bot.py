@@ -5,19 +5,7 @@ import time
 import requests
 from PyQt5.QtCore import QThread, pyqtSignal
 
-# RTL mark — forces right-to-left rendering in Telegram for every line
-_R = "‏"
-
-_ALERT_NAMES = {
-    "motion": "תנועה",
-    "noise":  "רעש חריג",
-    "both":   "תנועה ורעש",
-}
-_ALERT_ICONS = {
-    "motion": "👁️",
-    "noise":  "🔊",
-    "both":   "⚠️",
-}
+from i18n import tr, is_rtl
 
 
 class TelegramSender(QThread):
@@ -40,23 +28,23 @@ class TelegramSender(QThread):
 
     def test_connection(self) -> tuple[bool, str]:
         if not self.is_configured():
-            return False, "טוקן הבוט או מזהה הצ'אט חסרים."
+            return False, tr("tg_err_no_creds")
         try:
             r = requests.get(
                 f"https://api.telegram.org/bot{self._token}/getMe", timeout=10
             )
             data = r.json()
             if not data.get("ok"):
-                return False, data.get("description", "שגיאת Telegram לא ידועה")
+                return False, data.get("description", tr("tg_err_title"))
             username = data["result"]["username"]
-            self._send_text(f"{_R}✅ HomeGuard מחובר ועובד!")
-            return True, f"מחובר כ-@{username}"
+            self._send_text(tr("tg_connected"))
+            return True, tr("tg_connected_as", username=username)
         except requests.exceptions.SSLError:
-            return False, "שגיאת SSL — נסה לבנות מחדש עם build.py."
+            return False, tr("tg_err_ssl")
         except requests.exceptions.ConnectionError:
-            return False, "לא ניתן להגיע ל-Telegram — בדוק חיבור אינטרנט."
+            return False, tr("tg_err_conn")
         except requests.exceptions.Timeout:
-            return False, "פג זמן ההמתנה (10 שניות) — בדוק חיבור אינטרנט."
+            return False, tr("tg_err_timeout")
         except Exception as e:
             return False, str(e)
 
@@ -94,32 +82,37 @@ class TelegramSender(QThread):
             ).raise_for_status()
 
     def _build_message(self, item: dict) -> tuple[str, str]:
-        """Return (text_message, video_caption) in Hebrew RTL."""
-        atype  = item["alert_type"]
-        ts     = item["timestamp"]
-        chunk  = item.get("chunk", 1)
-        name   = _ALERT_NAMES.get(atype, atype)
-        icon   = _ALERT_ICONS.get(atype, "🚨")
+        """Return (text_message, video_caption) using the current UI language."""
+        atype = item["alert_type"]
+        ts    = item["timestamp"]
+        chunk = item.get("chunk", 1)
+        name  = tr(f"trigger_{atype}")
+        rtl   = "‏" if is_rtl() else ""   # RTL mark only when Hebrew is active
 
         if chunk == 1:
-            header = f"🚨 התראת HomeGuard — {name} זוהתה!"
+            header = tr("tg_header_1", name=name)
             extra  = ""
         else:
-            header = f"🚨 המשך אירוע — {name} (קטע {chunk})"
-            extra  = f"{_R}🔄 הדמות עדיין בפריים — ממשיך להקליט\n"
+            header = tr("tg_header_n", name=name, chunk=str(chunk))
+            extra  = tr("tg_still_in_frame")
 
         lines = [
-            f"{_R}{header}",
-            f"{_R}",
-            f"{_R}{icon} סוג אירוע: {name}",
-            f"{_R}🕐 שעה: {ts}",
-            f"{_R}📹 מצלמת HomeGuard",
+            f"{rtl}{header}",
+            f"{rtl}",
+            f"{rtl}{tr('tg_event_type')}: {name}",
+            f"{rtl}{tr('tg_time')}: {ts}",
+            f"{rtl}{tr('tg_camera')}",
         ]
         if extra:
-            lines.insert(2, extra.rstrip())
+            lines.insert(2, f"{rtl}{extra}")
 
         text = "\n".join(lines)
-        caption = f"{_R}📹 {name} — {ts}" + (f" (קטע {chunk})" if chunk > 1 else "")
+
+        if chunk == 1:
+            caption = tr("tg_caption", name=name, ts=ts)
+        else:
+            caption = tr("tg_caption_n", name=name, ts=ts, chunk=str(chunk))
+
         return text, caption
 
     # ── Thread body ────────────────────────────────────────────────────────────
@@ -141,7 +134,7 @@ class TelegramSender(QThread):
                     self._send_video(vp, caption)
 
                 self.send_complete.emit(
-                    f"התראה נשלחה: {item['alert_type']} — {item['timestamp']}"
+                    f"{item['alert_type']} — {item['timestamp']}"
                 )
 
             except Exception as e:
@@ -150,7 +143,7 @@ class TelegramSender(QThread):
                     self._queue.put(item)
                     time.sleep(30)
                 else:
-                    self.send_failed.emit(f"שליחת התראה נכשלה לאחר 3 ניסיונות: {e}")
+                    self.send_failed.emit(tr("tg_fail_retry", err=str(e)))
 
     def stop(self) -> None:
         self._running = False
