@@ -21,7 +21,7 @@ _PREBUFFER_MAXLEN = 250
 class CameraThread(QThread):
     """Captures frames, performs motion detection, and optionally records to disk."""
 
-    frame_ready = pyqtSignal(object, float)   # display_frame (ndarray), motion_level 0-1
+    frame_ready = pyqtSignal(object, float, bool)  # frame, motion_level 0-1, person_detected
     camera_error = pyqtSignal(str)
 
     def __init__(self, camera_index: int = 0, parent=None):
@@ -82,7 +82,14 @@ class CameraThread(QThread):
         raw_fps = cap.get(cv2.CAP_PROP_FPS)
         self.actual_fps = raw_fps if raw_fps > 0 else 20.0
 
+        # HOG person detector — built into OpenCV, no external model files needed
+        hog = cv2.HOGDescriptor()
+        hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+
         prev_gray = None
+        frame_count = 0
+        _person_detected = False
+        _person_boxes: list = []  # scaled bounding boxes, redrawn every frame
 
         while self._running:
             ret, frame = cap.read()
@@ -90,6 +97,7 @@ class CameraThread(QThread):
                 time.sleep(0.05)
                 continue
 
+            frame_count += 1
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             gray = cv2.GaussianBlur(gray, (21, 21), 0)
 
@@ -130,6 +138,38 @@ class CameraThread(QThread):
 
             prev_gray = gray
 
+            # Run HOG person detection every 10 frames (~2×/s at 20 fps).
+            # Operates on a 320×240 downscale for CPU efficiency.
+            if frame_count % 10 == 0:
+                small = cv2.resize(frame, (320, 240))
+                raw_boxes, _ = hog.detectMultiScale(
+                    small,
+                    winStride=(8, 8),
+                    padding=(4, 4),
+                    scale=1.05,
+                )
+                if raw_boxes is not None and len(raw_boxes) > 0:
+                    sx = frame.shape[1] / 320
+                    sy = frame.shape[0] / 240
+                    _person_boxes = [
+                        (int(x * sx), int(y * sy),
+                         int((x + w) * sx), int((y + h) * sy))
+                        for (x, y, w, h) in raw_boxes
+                    ]
+                    _person_detected = True
+                else:
+                    _person_boxes = []
+                    _person_detected = False
+
+            # Draw cached person boxes on every frame so the outline is stable
+            for (x1, y1, x2, y2) in _person_boxes:
+                cv2.rectangle(display, (x1, y1), (x2, y2), (255, 120, 0), 2)
+                cv2.putText(
+                    display, "PERSON",
+                    (x1, max(y1 - 5, 12)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 120, 0), 2,
+                )
+
             with QMutexLocker(self._mutex):
                 # Always feed the pre-event circular buffer
                 self._prebuffer.append(frame.copy())
@@ -137,7 +177,7 @@ class CameraThread(QThread):
                 if self._recording and self._writer is not None:
                     self._writer.write(frame)
 
-            self.frame_ready.emit(display, motion_level)
+            self.frame_ready.emit(display, motion_level, _person_detected)
 
         cap.release()
 

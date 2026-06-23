@@ -323,6 +323,7 @@ class MainWindow(QMainWindow):
         self._current_ts = ""
         self._current_path = ""
         self._last_motion_level = 0.0
+        self._last_person_detected = False
         self._recording_chunk = 0
 
         token, chat_id = load_telegram_creds()
@@ -743,7 +744,8 @@ class MainWindow(QMainWindow):
     def _on_rec_done(self, path: str) -> None:
         should_continue = (
             self.state == STATE_RECORDING and
-            self._last_motion_level > self._motion_alert_threshold()
+            (self._last_motion_level > self._motion_alert_threshold() or
+             self._last_person_detected)
         )
         if not should_continue:
             self.audio.start()
@@ -777,8 +779,9 @@ class MainWindow(QMainWindow):
 
     # ── Slots ──────────────────────────────────────────────────────────────────
 
-    def _on_frame(self, frame: np.ndarray, motion_level: float) -> None:
+    def _on_frame(self, frame: np.ndarray, motion_level: float, person_detected: bool) -> None:
         self._last_motion_level = motion_level
+        self._last_person_detected = person_detected
         display = frame.copy()
 
         if self.state == STATE_COUNTDOWN:
@@ -816,13 +819,18 @@ class MainWindow(QMainWindow):
 
         bar_val = int(motion_level * 100)
         self.motion_bar.setValue(min(bar_val, 100))
-        chunk_color = "#ff4444" if motion_level > self._motion_alert_threshold() else "#3dbb6d"
+        if person_detected:
+            chunk_color = "#ff8800"   # orange — person in frame (even if still)
+        elif motion_level > self._motion_alert_threshold():
+            chunk_color = "#ff4444"   # red — motion above threshold
+        else:
+            chunk_color = "#3dbb6d"   # green — quiet
         self.motion_bar.setStyleSheet(
             f"QProgressBar::chunk {{ border-radius: 3px; background: {chunk_color}; }}"
         )
 
         if self.state == STATE_ARMED and self._alert_cooldown <= 0:
-            if motion_level > self._motion_alert_threshold():
+            if motion_level > self._motion_alert_threshold() or person_detected:
                 self._motion_consecutive += 1
                 if self._motion_consecutive >= 3:
                     self._motion_consecutive = 0
