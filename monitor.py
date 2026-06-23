@@ -88,8 +88,9 @@ class CameraThread(QThread):
 
         prev_gray = None
         frame_count = 0
-        _person_detected = False
-        _person_boxes: list = []  # scaled bounding boxes, redrawn every frame
+        _person_boxes: list = []  # scaled bounding boxes cached between HOG calls
+        _person_last_seen: float = 0.0  # time.time() of last confirmed HOG detection
+        _PERSON_PERSISTENCE = 30.0     # seconds to keep person_detected=True after last hit
 
         while self._running:
             ret, frame = cap.read()
@@ -139,27 +140,34 @@ class CameraThread(QThread):
             prev_gray = gray
 
             # Run HOG person detection every 10 frames (~2×/s at 20 fps).
-            # Operates on a 320×240 downscale for CPU efficiency.
+            # Wrapped in try/except — HOG can crash on certain frame geometries.
+            # np.ascontiguousarray guards against non-contiguous memory layouts.
             if frame_count % 10 == 0:
-                small = cv2.resize(frame, (320, 240))
-                raw_boxes, _ = hog.detectMultiScale(
-                    small,
-                    winStride=(8, 8),
-                    padding=(4, 4),
-                    scale=1.05,
-                )
-                if raw_boxes is not None and len(raw_boxes) > 0:
-                    sx = frame.shape[1] / 320
-                    sy = frame.shape[0] / 240
-                    _person_boxes = [
-                        (int(x * sx), int(y * sy),
-                         int((x + w) * sx), int((y + h) * sy))
-                        for (x, y, w, h) in raw_boxes
-                    ]
-                    _person_detected = True
-                else:
-                    _person_boxes = []
-                    _person_detected = False
+                try:
+                    small = np.ascontiguousarray(cv2.resize(frame, (320, 240)))
+                    raw_boxes, _ = hog.detectMultiScale(
+                        small,
+                        winStride=(8, 8),
+                        padding=(4, 4),
+                        scale=1.05,
+                    )
+                    if raw_boxes is not None and len(raw_boxes) > 0:
+                        sx = frame.shape[1] / 320
+                        sy = frame.shape[0] / 240
+                        _person_boxes = [
+                            (int(x * sx), int(y * sy),
+                             int((x + w) * sx), int((y + h) * sy))
+                            for (x, y, w, h) in raw_boxes
+                        ]
+                        _person_last_seen = time.time()
+                    else:
+                        _person_boxes = []
+                except Exception:
+                    _person_boxes = []  # recover silently — camera must keep running
+
+            # Persist "person present" for _PERSON_PERSISTENCE seconds after last HOG hit.
+            # This bridges the gap when the person sits still and HOG can't detect them.
+            _person_detected = (time.time() - _person_last_seen) < _PERSON_PERSISTENCE
 
             # Draw cached person boxes on every frame so the outline is stable
             for (x1, y1, x2, y2) in _person_boxes:

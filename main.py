@@ -325,6 +325,7 @@ class MainWindow(QMainWindow):
         self._last_motion_level = 0.0
         self._last_person_detected = False
         self._last_display_frame: np.ndarray | None = None
+        self._alert_baseline: np.ndarray | None = None  # pre-alert background for scene-change check
         self._recording_chunk = 0
 
         token, chat_id = load_telegram_creds()
@@ -709,6 +710,20 @@ class MainWindow(QMainWindow):
         pre_secs = self.config.get("pre_buffer_secs", 5)
 
         prebuffer = self.camera.snapshot_prebuffer(pre_secs)
+
+        # Build a grayscale background baseline from the FIRST few frames of the pre-buffer
+        # (before the subject entered). Used by _scene_changed() to keep recording while a
+        # still person differs from the background, even when HOG can't detect them.
+        if prebuffer:
+            n_bg = max(1, min(5, len(prebuffer) // 4))
+            self._alert_baseline = np.mean(
+                [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).astype(np.float32)
+                 for f in prebuffer[:n_bg]],
+                axis=0,
+            )
+        else:
+            self._alert_baseline = None
+
         self.audio.stop()
 
         self.recorder = RecordingThread(self.camera, out, dur, fps, size, prebuffer, self)
@@ -753,7 +768,8 @@ class MainWindow(QMainWindow):
         should_continue = (
             self.state == STATE_RECORDING and
             (self._last_motion_level > self._motion_alert_threshold() or
-             self._last_person_detected)
+             self._last_person_detected or
+             self._scene_changed())
         )
         if not should_continue:
             self.audio.start()
@@ -872,6 +888,18 @@ class MainWindow(QMainWindow):
                 pass
             if got_noise:
                 self._trigger_alert("noise", self._last_display_frame)
+
+    def _scene_changed(self) -> bool:
+        """True when the current frame still differs from the pre-alert background.
+
+        Works even when the subject is completely still and HOG can't detect them:
+        the saved baseline is the background WITHOUT the subject, so any person
+        remaining in frame will keep producing a meaningful pixel difference.
+        """
+        if self._alert_baseline is None or self._last_display_frame is None:
+            return False
+        curr = cv2.cvtColor(self._last_display_frame, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        return float(np.abs(curr - self._alert_baseline).mean()) > 12.0
 
     def _motion_alert_threshold(self) -> float:
         sens = self.config["motion_sensitivity"]
