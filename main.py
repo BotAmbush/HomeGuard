@@ -324,6 +324,7 @@ class MainWindow(QMainWindow):
         self._current_path = ""
         self._last_motion_level = 0.0
         self._last_person_detected = False
+        self._last_display_frame: np.ndarray | None = None
         self._recording_chunk = 0
 
         token, chat_id = load_telegram_creds()
@@ -678,7 +679,7 @@ class MainWindow(QMainWindow):
         play_armed_sound()
         self.statusBar().showMessage(tr("sb_armed"), 4000)
 
-    def _trigger_alert(self, trigger: str) -> None:
+    def _trigger_alert(self, trigger: str, snapshot_frame: np.ndarray | None = None) -> None:
         """Start the FIRST recording chunk for a new alert event (with pre-buffer)."""
         if self.state != STATE_ARMED:
             return
@@ -694,6 +695,13 @@ class MainWindow(QMainWindow):
         self._current_trigger = trigger
         self._current_ts   = ts
         self._current_path = out
+
+        # Send a snapshot immediately so the user sees what triggered the alert
+        # while the ~15 s video clip is still being recorded.
+        if self.telegram.is_configured() and snapshot_frame is not None:
+            ok, jpeg = cv2.imencode(".jpg", snapshot_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            if ok:
+                self.telegram.send_snapshot(trigger, ts, bytes(jpeg))
 
         dur  = self.config.get("clip_duration", 15)
         fps  = self.camera.actual_fps or 20.0
@@ -817,6 +825,9 @@ class MainWindow(QMainWindow):
         )
         self.video_label.setPixmap(pixmap)
 
+        # Cache annotated frame so noise-triggered alerts can include a snapshot too
+        self._last_display_frame = display
+
         bar_val = int(motion_level * 100)
         self.motion_bar.setValue(min(bar_val, 100))
         if person_detected:
@@ -834,7 +845,7 @@ class MainWindow(QMainWindow):
                 self._motion_consecutive += 1
                 if self._motion_consecutive >= 3:
                     self._motion_consecutive = 0
-                    self._trigger_alert("motion")
+                    self._trigger_alert("motion", display)
             else:
                 self._motion_consecutive = 0
 
@@ -860,7 +871,7 @@ class MainWindow(QMainWindow):
             except queue.Empty:
                 pass
             if got_noise:
-                self._trigger_alert("noise")
+                self._trigger_alert("noise", self._last_display_frame)
 
     def _motion_alert_threshold(self) -> float:
         sens = self.config["motion_sensitivity"]

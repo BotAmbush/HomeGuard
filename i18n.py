@@ -66,6 +66,8 @@ _STRINGS: dict[str, dict[str, str]] = {
 
         # Telegram messages sent to phone
         "tg_connected":        "✅ HomeGuard connected!",
+        "tg_snap_detected":    "🔔 {name} detected!",
+        "tg_snap_coming":      "📹 Video is on its way…",
         "tg_header_1":         "\U0001f6a8 HomeGuard Alert — {name} detected!",
         "tg_header_n":         "\U0001f6a8 Continuing — {name} (clip {chunk})",
         "tg_still_in_frame":   "\U0001f504 Still in frame — recording continues",
@@ -205,6 +207,8 @@ _STRINGS: dict[str, dict[str, str]] = {
 
         # Telegram messages sent to phone
         "tg_connected":        "✅ HomeGuard מחובר ועובד!",
+        "tg_snap_detected":    "!{name} זוהתה 🔔",
+        "tg_snap_coming":      "…📹 וידאו בדרך",
         "tg_header_1":         "\U0001f6a8 התראת HomeGuard — {name} זוהתה!",
         "tg_header_n":         "\U0001f6a8 המשך אירוע — {name} (קטע {chunk})",
         "tg_still_in_frame":   "\U0001f504 הדמות עדיין בפריים — ממשיך להקליט",

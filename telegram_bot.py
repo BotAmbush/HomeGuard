@@ -48,6 +48,15 @@ class TelegramSender(QThread):
         except Exception as e:
             return False, str(e)
 
+    def send_snapshot(self, alert_type: str, timestamp: str, jpeg_bytes: bytes) -> None:
+        """Queue a snapshot photo for immediate delivery (before the clip is ready)."""
+        self._queue.put({
+            "task":       "snapshot",
+            "alert_type": alert_type,
+            "timestamp":  timestamp,
+            "jpeg_bytes": jpeg_bytes,
+        })
+
     def send_alert(
         self,
         alert_type: str,
@@ -56,6 +65,7 @@ class TelegramSender(QThread):
         chunk: int = 1,
     ) -> None:
         self._queue.put({
+            "task":       "video",
             "alert_type": alert_type,
             "timestamp":  timestamp,
             "video_path": video_path,
@@ -80,6 +90,19 @@ class TelegramSender(QThread):
                 files={"video": f},
                 timeout=120,
             ).raise_for_status()
+
+    def _build_snapshot_caption(self, item: dict) -> str:
+        """Caption for the immediate snapshot photo."""
+        name = tr(f"trigger_{item['alert_type']}")
+        ts   = item["timestamp"]
+        rtl  = "‏" if is_rtl() else ""
+        return "\n".join([
+            f"{rtl}{tr('tg_snap_detected', name=name)}",
+            "",
+            f"{rtl}{tr('tg_time')}: {ts}",
+            f"{rtl}{tr('tg_camera')}",
+            f"{rtl}{tr('tg_snap_coming')}",
+        ])
 
     def _build_message(self, item: dict) -> tuple[str, str]:
         """Return (text_message, video_caption) using the current UI language."""
@@ -125,21 +148,38 @@ class TelegramSender(QThread):
             except queue.Empty:
                 continue
 
+            task = item.get("task", "video")
             try:
-                text, caption = self._build_message(item)
-                self._send_text(text)
+                if task == "snapshot":
+                    caption = self._build_snapshot_caption(item)
+                    requests.post(
+                        f"https://api.telegram.org/bot{self._token}/sendPhoto",
+                        data={"chat_id": self._chat_id, "caption": caption},
+                        files={"photo": ("snapshot.jpg", item["jpeg_bytes"], "image/jpeg")},
+                        timeout=30,
+                    ).raise_for_status()
+                    self.send_complete.emit(f"snapshot — {item['timestamp']}")
 
-                vp = item.get("video_path")
-                if vp and os.path.exists(vp):
-                    self._send_video(vp, caption)
+                else:
+                    text, caption = self._build_message(item)
+                    chunk = item.get("chunk", 1)
 
-                self.send_complete.emit(
-                    f"{item['alert_type']} — {item['timestamp']}"
-                )
+                    # Chunk 1: snapshot already notified the user — just send the clip.
+                    # Chunk 2+: send a continuation text before the clip.
+                    if chunk > 1:
+                        self._send_text(text)
+
+                    vp = item.get("video_path")
+                    if vp and os.path.exists(vp):
+                        self._send_video(vp, caption)
+
+                    self.send_complete.emit(
+                        f"{item['alert_type']} — {item['timestamp']}"
+                    )
 
             except Exception as e:
-                if item["retries"] < 3:
-                    item["retries"] += 1
+                if task == "video" and item.get("retries", 0) < 3:
+                    item["retries"] = item.get("retries", 0) + 1
                     self._queue.put(item)
                     time.sleep(30)
                 else:
