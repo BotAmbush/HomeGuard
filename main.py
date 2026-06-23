@@ -323,7 +323,7 @@ class MainWindow(QMainWindow):
         self._current_ts = ""
         self._current_path = ""
         self._last_motion_level = 0.0
-        self._last_person_detected = False
+        self._last_face_detected = False
         self._last_display_frame: np.ndarray | None = None
         self._alert_baseline: np.ndarray | None = None  # pre-alert background for scene-change check
         self._recording_chunk = 0
@@ -768,7 +768,7 @@ class MainWindow(QMainWindow):
         should_continue = (
             self.state == STATE_RECORDING and
             (self._last_motion_level > self._motion_alert_threshold() or
-             self._last_person_detected or
+             self._last_face_detected or
              self._scene_changed())
         )
         if not should_continue:
@@ -803,9 +803,9 @@ class MainWindow(QMainWindow):
 
     # ── Slots ──────────────────────────────────────────────────────────────────
 
-    def _on_frame(self, frame: np.ndarray, motion_level: float, person_detected: bool) -> None:
+    def _on_frame(self, frame: np.ndarray, motion_level: float, face_detected: bool) -> None:
         self._last_motion_level = motion_level
-        self._last_person_detected = person_detected
+        self._last_face_detected = face_detected
         display = frame.copy()
 
         if self.state == STATE_COUNTDOWN:
@@ -846,8 +846,8 @@ class MainWindow(QMainWindow):
 
         bar_val = int(motion_level * 100)
         self.motion_bar.setValue(min(bar_val, 100))
-        if person_detected:
-            chunk_color = "#ff8800"   # orange — person in frame (even if still)
+        if face_detected:
+            chunk_color = "#22aaff"   # blue — face visible
         elif motion_level > self._motion_alert_threshold():
             chunk_color = "#ff4444"   # red — motion above threshold
         else:
@@ -857,7 +857,7 @@ class MainWindow(QMainWindow):
         )
 
         if self.state == STATE_ARMED and self._alert_cooldown <= 0:
-            if motion_level > self._motion_alert_threshold() or person_detected:
+            if motion_level > self._motion_alert_threshold() or face_detected:
                 self._motion_consecutive += 1
                 if self._motion_consecutive >= 3:
                     self._motion_consecutive = 0

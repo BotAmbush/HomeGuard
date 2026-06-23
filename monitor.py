@@ -21,7 +21,7 @@ _PREBUFFER_MAXLEN = 250
 class CameraThread(QThread):
     """Captures frames, performs motion detection, and optionally records to disk."""
 
-    frame_ready = pyqtSignal(object, float, bool)  # frame, motion_level 0-1, person_detected
+    frame_ready = pyqtSignal(object, float, bool)  # frame, motion_level 0-1, face_detected
     camera_error = pyqtSignal(str)
 
     def __init__(self, camera_index: int = 0, parent=None):
@@ -82,15 +82,17 @@ class CameraThread(QThread):
         raw_fps = cap.get(cv2.CAP_PROP_FPS)
         self.actual_fps = raw_fps if raw_fps > 0 else 20.0
 
-        # HOG person detector — built into OpenCV, no external model files needed
-        hog = cv2.HOGDescriptor()
-        hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+        # Haar cascade face detector — works on stationary faces, unlike frame-differencing.
+        # cv2 data files are bundled via --collect-all cv2 in build.py.
+        _cascade_xml = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        face_cascade = cv2.CascadeClassifier(_cascade_xml)
+        if face_cascade.empty():
+            face_cascade = None  # degrade gracefully if XML is missing
 
         prev_gray = None
         frame_count = 0
-        _person_boxes: list = []  # scaled bounding boxes cached between HOG calls
-        _person_last_seen: float = 0.0  # time.time() of last confirmed HOG detection
-        _PERSON_PERSISTENCE = 30.0     # seconds to keep person_detected=True after last hit
+        face_detected = False
+        face_boxes: list = []  # scaled face rects, cached between detection calls
 
         while self._running:
             ret, frame = cap.read()
@@ -139,44 +141,36 @@ class CameraThread(QThread):
 
             prev_gray = gray
 
-            # Run HOG person detection every 10 frames (~2×/s at 20 fps).
-            # Wrapped in try/except — HOG can crash on certain frame geometries.
-            # np.ascontiguousarray guards against non-contiguous memory layouts.
-            if frame_count % 10 == 0:
-                try:
-                    small = np.ascontiguousarray(cv2.resize(frame, (320, 240)))
-                    raw_boxes, _ = hog.detectMultiScale(
-                        small,
-                        winStride=(8, 8),
-                        padding=(4, 4),
-                        scale=1.05,
-                    )
-                    if raw_boxes is not None and len(raw_boxes) > 0:
-                        sx = frame.shape[1] / 320
-                        sy = frame.shape[0] / 240
-                        _person_boxes = [
-                            (int(x * sx), int(y * sy),
-                             int((x + w) * sx), int((y + h) * sy))
-                            for (x, y, w, h) in raw_boxes
-                        ]
-                        _person_last_seen = time.time()
-                    else:
-                        _person_boxes = []
-                except Exception:
-                    _person_boxes = []  # recover silently — camera must keep running
-
-            # Persist "person present" for _PERSON_PERSISTENCE seconds after last HOG hit.
-            # This bridges the gap when the person sits still and HOG can't detect them.
-            _person_detected = (time.time() - _person_last_seen) < _PERSON_PERSISTENCE
-
-            # Draw cached person boxes on every frame so the outline is stable
-            for (x1, y1, x2, y2) in _person_boxes:
-                cv2.rectangle(display, (x1, y1), (x2, y2), (255, 120, 0), 2)
-                cv2.putText(
-                    display, "PERSON",
-                    (x1, max(y1 - 5, 12)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 120, 0), 2,
+            # Face detection every 5 frames (~4×/s at 20 fps).
+            # Haar cascades are fast and safe — no segfault risk unlike HOG.
+            # Detects frontal faces even when completely stationary.
+            if face_cascade is not None and frame_count % 5 == 0:
+                small_gray = cv2.resize(
+                    cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (320, 240)
                 )
+                raw_faces = face_cascade.detectMultiScale(
+                    small_gray,
+                    scaleFactor=1.1,
+                    minNeighbors=4,
+                    minSize=(20, 20),
+                )
+                if len(raw_faces) > 0:
+                    sx = frame.shape[1] / 320
+                    sy = frame.shape[0] / 240
+                    face_boxes = [
+                        (int(x * sx), int(y * sy),
+                         int((x + w) * sx), int((y + h) * sy))
+                        for (x, y, w, h) in raw_faces
+                    ]
+                    face_detected = True
+                else:
+                    face_boxes = []
+                    face_detected = False
+
+            for (x1, y1, x2, y2) in face_boxes:
+                cv2.rectangle(display, (x1, y1), (x2, y2), (0, 180, 255), 2)
+                cv2.putText(display, "FACE", (x1, max(y1 - 5, 12)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 180, 255), 2)
 
             with QMutexLocker(self._mutex):
                 # Always feed the pre-event circular buffer
@@ -185,7 +179,7 @@ class CameraThread(QThread):
                 if self._recording and self._writer is not None:
                     self._writer.write(frame)
 
-            self.frame_ready.emit(display, motion_level, _person_detected)
+            self.frame_ready.emit(display, motion_level, face_detected)
 
         cap.release()
 
