@@ -946,6 +946,9 @@ class MainWindow(QMainWindow):
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    # Must be set before QApplication is created so Qt respects the OS display scale factor
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     app = QApplication(sys.argv)
     app.setApplicationName("HomeGuard")
     app.setStyle("Fusion")
