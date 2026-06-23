@@ -1,0 +1,25 @@
+# Secrets & local config
+.env
+telegram.txt
+config.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Build artifacts
+_build_tmp/
+*.spec
+HomeGuard.exe
+
+# Recordings & temp media
+recordings/
+*.avi
+*__vid.avi
+*__aud.wav
+
+# Dev helpers
+_test_recording.py
+_make_screenshot.py

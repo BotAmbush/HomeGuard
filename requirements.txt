@@ -1,0 +1,11 @@
+pyinstaller>=5.13.0
+PyQt5>=5.15.0
+PyQt5-Qt5>=5.15.0
+PyQt5-sip>=12.11.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+sounddevice>=0.4.6
+soundfile>=0.12.1
+imageio-ffmpeg>=0.4.9
+requests>=2.31.0
+Pillow>=10.0.0
