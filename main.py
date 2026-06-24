@@ -760,36 +760,51 @@ class MainWindow(QMainWindow):
         self.recorder.recording_failed.connect(self._on_rec_fail)
         self.recorder.start()
         if old_recorder is not None:
-            old_recorder.deleteLater()
+            # Wait for the thread's run() to fully return (including its finally
+            # block) before deleting the object. Calling deleteLater() directly
+            # here can destroy the QThread while its finally block is still
+            # executing (temp-file cleanup), which crashes the app.
+            old_recorder.finished.connect(old_recorder.deleteLater)
 
         self.statusBar().showMessage(tr("sb_rec_n", n=str(chunk_n)))
 
     def _on_rec_done(self, path: str) -> None:
-        should_continue = (
-            self.state == STATE_RECORDING and
-            (self._last_motion_level > self._motion_alert_threshold() or
-             self._last_face_detected or
-             self._scene_changed())
-        )
-        if not should_continue:
-            self.audio.start()
-
-        if self.telegram.is_configured():
-            self.telegram.send_alert(
-                self._current_trigger, self._current_ts, path,
-                chunk=self._recording_chunk,
+        try:
+            should_continue = (
+                self.state == STATE_RECORDING and
+                (self._last_motion_level > self._motion_alert_threshold() or
+                 self._last_face_detected or
+                 self._scene_changed())
             )
-        else:
-            self.statusBar().showMessage(
-                tr("sb_saved_no_tg", name=Path(path).name), 6000
-            )
+            if not should_continue:
+                self.audio.start()
 
-        if self.tabs.currentIndex() == 1:
-            self.gallery.refresh()
+            if self.telegram.is_configured():
+                self.telegram.send_alert(
+                    self._current_trigger, self._current_ts, path,
+                    chunk=self._recording_chunk,
+                )
+            else:
+                self.statusBar().showMessage(
+                    tr("sb_saved_no_tg", name=Path(path).name), 6000
+                )
 
-        if should_continue:
-            self._continue_recording()
-        else:
+            if self.tabs.currentIndex() == 1:
+                self.gallery.refresh()
+
+            if should_continue:
+                self._continue_recording()
+            else:
+                if self.state == STATE_RECORDING:
+                    self.state = STATE_ARMED
+                    self._update_status()
+        except Exception as e:
+            # Never let an exception here leave the state machine stuck in RECORDING
+            print(f"[_on_rec_done] unhandled error: {e}")
+            try:
+                self.audio.start()
+            except Exception:
+                pass
             if self.state == STATE_RECORDING:
                 self.state = STATE_ARMED
                 self._update_status()
@@ -898,8 +913,13 @@ class MainWindow(QMainWindow):
         """
         if self._alert_baseline is None or self._last_display_frame is None:
             return False
-        curr = cv2.cvtColor(self._last_display_frame, cv2.COLOR_BGR2GRAY).astype(np.float32)
-        return float(np.abs(curr - self._alert_baseline).mean()) > 12.0
+        try:
+            curr = cv2.cvtColor(self._last_display_frame, cv2.COLOR_BGR2GRAY).astype(np.float32)
+            if curr.shape != self._alert_baseline.shape:
+                return False
+            return float(np.abs(curr - self._alert_baseline).mean()) > 12.0
+        except Exception:
+            return False
 
     def _motion_alert_threshold(self) -> float:
         sens = self.config["motion_sensitivity"]

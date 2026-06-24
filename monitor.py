@@ -321,6 +321,7 @@ class RecordingThread(QThread):
         temp_vid = base + "__vid.avi"
         temp_aud = base + "__aud.wav"
 
+        recording_stopped = False
         try:
             # ── Video writer ───────────────────────────────────────────────────
             fourcc = cv2.VideoWriter_fourcc(*"XVID")
@@ -363,7 +364,12 @@ class RecordingThread(QThread):
                 print(f"[RecordingThread] mic unavailable (video-only): {mic_err}")
                 time.sleep(self.duration)
 
+            # Stop camera writing before releasing the writer.
+            # Set the flag before emitting so the finally block skips the redundant
+            # stop_recording() call — otherwise it races with _continue_recording()
+            # which may have already called start_recording() for the next chunk.
             self.camera_thread.stop_recording()
+            recording_stopped = True
             writer.release()
 
             # ── Save audio: prepend silence for the pre-buffer period ──────────
@@ -405,7 +411,11 @@ class RecordingThread(QThread):
         except Exception as e:
             self.recording_failed.emit(str(e))
         finally:
-            self.camera_thread.stop_recording()
+            # Only stop recording in the error path — in the success path it was
+            # already stopped above (recording_stopped=True) and the GUI may have
+            # already called start_recording() for the next chunk.
+            if not recording_stopped:
+                self.camera_thread.stop_recording()
             for f in [temp_vid, temp_aud]:
                 if os.path.exists(f):
                     try:
